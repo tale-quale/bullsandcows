@@ -31,6 +31,11 @@ def get_settings_keyboard():
     keyboard.add(types.KeyboardButton("🔙 Back to Main Menu"))
     return keyboard
 
+def get_player_display_name(user_id: int) -> str:
+    """Get player's display name (nickname or user_id)."""
+    nickname = db.get_nickname(user_id)
+    return nickname if nickname else str(user_id)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     """Handle /start command."""
@@ -59,8 +64,21 @@ def play_game(message):
         game.start_game(waiting_player, user_id)
         
         # Notify both players
-        bot.send_message(waiting_player, "Game started! Choose your 4-digit number (all digits must be unique).")
-        bot.send_message(user_id, "Game started! Choose your 4-digit number (all digits must be unique).")
+        waiting_name = get_player_display_name(waiting_player)
+        current_name = get_player_display_name(user_id)
+        
+        bot.send_message(
+            waiting_player,
+            f"Game started! You are playing against {current_name}.\n"
+            f"Round 1\n"
+            f"Please choose your 4-digit number (all digits must be unique)."
+        )
+        bot.send_message(
+            user_id,
+            f"Game started! You are playing against {waiting_name}.\n"
+            f"Round 1\n"
+            f"Please choose your 4-digit number (all digits must be unique)."
+        )
     else:
         # Add player to waiting list
         game.add_to_waiting(user_id)
@@ -140,7 +158,7 @@ def handle_nickname(message):
 
 @bot.message_handler(func=lambda message: message.from_user.id in game.active_games)
 def handle_game_input(message):
-    """Handle game input (guesses)."""
+    """Handle game input (guesses and secret numbers)."""
     user_id = message.from_user.id
     game_data = game.active_games[user_id]
     
@@ -148,23 +166,77 @@ def handle_game_input(message):
         bot.send_message(message.chat.id, "Please enter a valid 4-digit number with unique digits.")
         return
 
+    # If player hasn't set their secret number yet
+    if game_data['secret'] is None:
+        if game.set_secret_number(user_id, message.text):
+            opponent_id = game_data['opponent']
+            opponent_name = get_player_display_name(opponent_id)
+            
+            # Check if both players have set their numbers
+            if game.active_games[opponent_id]['secret'] is not None:
+                # Both numbers are set, start the game
+                bot.send_message(
+                    user_id,
+                    f"Your secret number has been set. {opponent_name} has already set their number.\n"
+                    f"Round 1\n"
+                    f"It's your turn to guess!"
+                )
+                bot.send_message(
+                    opponent_id,
+                    f"Your opponent has set their number.\n"
+                    f"Round 1\n"
+                    f"It's your turn to guess!"
+                )
+            else:
+                # Wait for opponent
+                bot.send_message(
+                    user_id,
+                    f"Your secret number has been set. Waiting for {opponent_name} to set their number..."
+                )
+                bot.send_message(
+                    opponent_id,
+                    f"Your opponent has set their number. It's your turn to set your number."
+                )
+        else:
+            bot.send_message(message.chat.id, "Invalid number. Please try again.")
+        return
+
+    # Handle guess
+    if not game.is_player_turn(user_id):
+        bot.send_message(message.chat.id, "It's not your turn yet. Please wait for your opponent.")
+        return
+
     result = game.make_guess(user_id, message.text)
     if result is None:
-        bot.send_message(message.chat.id, "Invalid input. Please try again.")
+        bot.send_message(message.chat.id, "Invalid input or not your turn. Please try again.")
         return
 
     bulls, cows = result
+    opponent_id = game_data['opponent']
+    opponent_name = get_player_display_name(opponent_id)
+    current_round = game_data['round']
+    
+    # Notify both players about the guess
     bot.send_message(
-        message.chat.id,
+        user_id,
+        f"Round {current_round}\n"
         f"Your guess: {message.text}\n"
         f"Bulls: {bulls} 🐂\n"
-        f"Cows: {cows} 🐄"
+        f"Cows: {cows} 🐄\n"
+        f"Waiting for {opponent_name}'s guess..."
+    )
+    bot.send_message(
+        opponent_id,
+        f"Round {current_round}\n"
+        f"Your opponent's guess: {message.text}\n"
+        f"Bulls: {bulls} 🐂\n"
+        f"Cows: {cows} 🐄\n"
+        f"It's your turn to guess!"
     )
 
     # Check for winner
     winner = game.check_winner(user_id)
     if winner is not None:
-        opponent_id = game_data['opponent']
         rounds = game_data['round']
         
         if winner == -1:  # Draw

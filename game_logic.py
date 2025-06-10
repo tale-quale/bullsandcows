@@ -6,12 +6,6 @@ class Game:
         self.active_games: Dict[int, Dict] = {}  # player_id -> game_data
         self.waiting_players: set[int] = set()
 
-    def generate_number(self) -> str:
-        """Generate a random 4-digit number with unique digits."""
-        digits = list(range(10))
-        random.shuffle(digits)
-        return ''.join(map(str, digits[:4]))
-
     def validate_number(self, number: str) -> bool:
         """Validate if the number is a valid 4-digit number with unique digits."""
         return (len(number) == 4 and 
@@ -28,16 +22,35 @@ class Game:
         """Start a new game between two players."""
         self.active_games[player1_id] = {
             'opponent': player2_id,
-            'secret': self.generate_number(),
+            'secret': None,  # Will be set by player
             'guesses': [],
-            'round': 1
+            'round': 1,
+            'current_turn': player1_id  # First player starts
         }
         self.active_games[player2_id] = {
             'opponent': player1_id,
-            'secret': self.generate_number(),
+            'secret': None,  # Will be set by player
             'guesses': [],
-            'round': 1
+            'round': 1,
+            'current_turn': player1_id  # First player starts
         }
+
+    def set_secret_number(self, player_id: int, number: str) -> bool:
+        """Set the secret number for a player."""
+        if player_id not in self.active_games:
+            return False
+        
+        if not self.validate_number(number):
+            return False
+
+        self.active_games[player_id]['secret'] = number
+        return True
+
+    def is_player_turn(self, player_id: int) -> bool:
+        """Check if it's the player's turn."""
+        if player_id not in self.active_games:
+            return False
+        return self.active_games[player_id]['current_turn'] == player_id
 
     def make_guess(self, player_id: int, guess: str) -> Optional[Tuple[int, int]]:
         """Make a guess and return bulls and cows if valid."""
@@ -45,11 +58,29 @@ class Game:
             return None
         
         game_data = self.active_games[player_id]
+        
+        # Check if it's player's turn
+        if not self.is_player_turn(player_id):
+            return None
+
+        # Check if both players have set their secret numbers
+        if game_data['secret'] is None or self.active_games[game_data['opponent']]['secret'] is None:
+            return None
+
         if not self.validate_number(guess):
             return None
 
-        bulls, cows = self.calculate_bulls_and_cows(game_data['secret'], guess)
+        # Calculate bulls and cows against opponent's secret number
+        opponent_id = game_data['opponent']
+        opponent_secret = self.active_games[opponent_id]['secret']
+        bulls, cows = self.calculate_bulls_and_cows(opponent_secret, guess)
+        
         game_data['guesses'].append((guess, bulls, cows))
+        
+        # Switch turns
+        game_data['current_turn'] = game_data['opponent']
+        self.active_games[game_data['opponent']]['current_turn'] = game_data['opponent']
+        
         return bulls, cows
 
     def check_winner(self, player_id: int) -> Optional[int]:
@@ -99,4 +130,10 @@ class Game:
 
     def get_waiting_player(self) -> Optional[int]:
         """Get a waiting player if available."""
-        return next(iter(self.waiting_players)) if self.waiting_players else None 
+        return next(iter(self.waiting_players)) if self.waiting_players else None
+
+    def get_game_state(self, player_id: int) -> Dict:
+        """Get the current state of the game for a player."""
+        if player_id not in self.active_games:
+            return {}
+        return self.active_games[player_id] 
